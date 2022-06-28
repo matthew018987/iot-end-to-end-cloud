@@ -1,0 +1,1818 @@
+# MIT License
+#
+# Copyright (c) 2022 matthew018987@gmail.com
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Example of end to end IoT cloud stack
+Transform: AWS::Serverless-2016-10-31
+Parameters:
+  DynamodbMinCapacityUnits:
+    Type: Number
+    Default: 1
+    Description: The minimum value for capacity units assigned to all dynamodb tables
+  DynamodbMaxCapacityUnits:
+    Type: Number
+    Default: 50
+    Description: The maximum value for capacity units assigned to all dynamodb tables
+
+Mappings:
+  Constants:
+    UserControllerMappingTableName:
+      TableName: UserControllerMappingTable
+    ControllerSensorDataV1TableName:
+      TableName: ControllerSensorDataV1Table
+    TwoWeekSensorDataTableName:
+      TableName: SensorTwoWeekPointTable
+    IoTFWBucketName:
+      BucketName: iotfwbucket
+
+Resources:
+  FirmwareBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Join:
+        - ''
+        - - Fn::FindInMap:
+            - Constants
+            - IoTFWBucketName
+            - BucketName
+          - '-'
+          - Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - Ref: AWS::StackId
+      VersioningConfiguration:
+        Status: Enabled
+
+  EmailerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 0
+      VisibilityTimeout: 120
+
+  ControllerSensorDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: deviceID
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: N
+      KeySchema:
+      - AttributeName: deviceID
+        KeyType: HASH
+      - AttributeName: timestamp
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+        WriteCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+      SSESpecification:
+        SSEEnabled: false
+      TableName:
+        Fn::FindInMap:
+        - Constants
+        - ControllerSensorDataV1TableName
+        - TableName
+      TimeToLiveSpecification:
+        AttributeName: expiretimestamp
+        Enabled: true
+
+  SensorTwoWeekPointTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: deviceID
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: N
+      KeySchema:
+      - AttributeName: deviceID
+        KeyType: HASH
+      - AttributeName: timestamp
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+        WriteCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+      SSESpecification:
+        SSEEnabled: false
+      TableName:
+        Fn::FindInMap:
+        - Constants
+        - TwoWeekSensorDataTableName
+        - TableName
+      TimeToLiveSpecification:
+        AttributeName: expiretimestamp
+        Enabled: true
+
+  UserControllerMappingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: userID
+        AttributeType: S
+      - AttributeName: deviceID
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userID
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+        WriteCapacityUnits:
+          Ref: DynamodbMinCapacityUnits
+      SSESpecification:
+        SSEEnabled: false
+      TableName:
+        Fn::FindInMap:
+        - Constants
+        - UserControllerMappingTableName
+        - TableName
+      GlobalSecondaryIndexes:
+      - IndexName: DeviceIndex
+        KeySchema:
+        - AttributeName: deviceID
+          KeyType: HASH
+        Projection:
+          ProjectionType: ALL
+        ProvisionedThroughput:
+          ReadCapacityUnits:
+            Ref: DynamodbMinCapacityUnits
+          WriteCapacityUnits:
+            Ref: DynamodbMinCapacityUnits
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  ControllerSensorDataTableWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: ControllerSensorDataTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: ControllerSensorDataTable
+
+  ControllerSensorDataTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ControllerSensorDataTableWriteScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: ControllerSensorDataTableWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  ControllerSensorDataTableReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: ControllerSensorDataTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+    DependsOn: ControllerSensorDataTable
+  ControllerSensorDataTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: ControllerSensorDataTableReadScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: ControllerSensorDataTableReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  SensorTwoWeekPointTableWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: SensorTwoWeekPointTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: SensorTwoWeekPointTable
+
+  SensorTwoWeekPointTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: SensorTwoWeekPointTableWriteScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: SensorTwoWeekPointTableWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  SensorTwoWeekPointTableReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: SensorTwoWeekPointTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: SensorTwoWeekPointTable
+
+  SensorTwoWeekPointTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: SensorTwoWeekPointTableReadScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: SensorTwoWeekPointTableReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  UserControllerMappingTableWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: UserControllerMappingTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: UserControllerMappingTable
+
+  UserControllerMappingTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: UserControllerMappingTableAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserControllerMappingTableWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  UserControllerMappingTableReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: UserControllerMappingTable
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: UserControllerMappingTable
+
+  UserControllerMappingTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: UserControllerMappingTableReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserControllerMappingTableReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  UserControllerMappingDeviceIndexWriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: UserControllerMappingTable
+          - /index/DeviceIndex
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:index:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: UserControllerMappingTable
+
+  UserControllerMappingDeviceIndexWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: UserControllerMappingDeviceIndexWriteAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserControllerMappingDeviceIndexWriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  UserControllerMappingDeviceIndexReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity:
+        Ref: DynamodbMaxCapacityUnits
+      MinCapacity:
+        Ref: DynamodbMinCapacityUnits
+      ResourceId:
+        Fn::Join:
+        - ''
+        - - table/
+          - Ref: UserControllerMappingTable
+          - /index/DeviceIndex
+      RoleARN:
+        Fn::Sub: arn:aws:iam::${AWS::AccountId}:role/aws-service-role/dynamodb.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_DynamoDBTable
+      ScalableDimension: dynamodb:index:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+    DependsOn: UserControllerMappingTable
+
+  UserControllerMappingDeviceIndexReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: UserControllerMappingDeviceIndexReadAutoScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId:
+        Ref: UserControllerMappingDeviceIndexReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  IoTRuleErrorCheckANDTwoWeekData:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: ErrorCheckANDTwoWeekData_1_0_0
+      TopicRulePayload:
+        RuleDisabled: 'false'
+        Sql: SELECT *, timestamp() as recvtimestamp, topic() as topic FROM 'iot/data/1.0.0/#'
+        Actions:
+        - Lambda:
+            FunctionArn:
+              Fn::GetAtt:
+              - DataStreamErrorCheckLambdaFunction
+              - Arn
+        - Lambda:
+            FunctionArn:
+              Fn::GetAtt:
+              - DataStreamTwoWeekWriterLambdaFunction
+              - Arn
+
+  IoTRuleOTASync:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: OTASync_1_0_0
+      TopicRulePayload:
+        RuleDisabled: 'false'
+        Sql: SELECT *, timestamp() as recvtimestamp, topic() as topic FROM 'iot/version/#'
+        Actions:
+        - Lambda:
+            FunctionArn:
+              Fn::GetAtt:
+              - DataStreamOTASyncLambdaFunction
+              - Arn
+
+  IoTRuleStoreData:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: StoreData_1_0_0
+      TopicRulePayload:
+        RuleDisabled: 'false'
+        Sql: SELECT *, timestamp() as recvtimestamp, substring(topic(), 15) as deviceID,
+          topic() as topic, (floor(timestamp() / 1E3) + (16 * 24 * 60 * 60)) as expiretimestamp
+          FROM 'iot/data/1.0.0/#'
+        Actions:
+        - DynamoDBv2:
+            PutItem:
+              TableName:
+                Ref: ControllerSensorDataTable
+            RoleArn:
+              Fn::GetAtt:
+              - StoreIoTDataRole
+              - Arn
+
+  StoreIoTDataPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Store IoT data rule policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          Resource:
+          - Fn::Join:
+            - ''
+            - - 'arn:aws:dynamodb:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - :table/
+              - Ref: ControllerSensorDataTable
+    DependsOn: ControllerSensorDataTable
+
+  StoreIoTDataRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: IoTSensorDataWriteRole
+      ManagedPolicyArns:
+      - Ref: StoreIoTDataPolicy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - iot.amazonaws.com
+          Action:
+          - sts:AssumeRole
+
+  CognitoGroupManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CognitoGroupManagementRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: GroupManagementPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - Fn::Join:
+              - ':'
+              - - arn:aws:logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group:/aws/lambda/*:*:*
+          - Effect: Allow
+            Action:
+            - cognito-idp:AdminAddUserToGroup
+            - cognito-idp:AdminRemoveUserFromGroup
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:cognito-idp:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :userpool/*
+
+  CognitoLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: cognito_add_user_to_group
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      FunctionName: cognito_add_user_to_group
+      Description: Add user to cognito user group on sign up
+      MemorySize: 128
+      Timeout: 10
+      Role:
+        Fn::GetAtt:
+        - CognitoGroupManagementRole
+        - Arn
+    DependsOn: CognitoGroupManagementRole
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        UnusedAccountValidityDays: 7
+      UsernameAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_LINK
+        EmailSubjectByLink: IoT example email account verification
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+        - Name: verified_email
+          Priority: 1
+      DeviceConfiguration:
+        ChallengeRequiredOnNewDevice: false
+        DeviceOnlyRememberedOnUserPrompt: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+      UserPoolName: IoTExampleAuthPool
+      LambdaConfig:
+        PostConfirmation:
+          Fn::GetAtt:
+          - CognitoLambdaFunction
+          - Arn
+      Schema:
+      - Name: email
+        AttributeDataType: String
+        Mutable: true
+        Required: true
+      - Name: lastname
+        AttributeDataType: String
+        Mutable: false
+        Required: false
+      - Name: firstname
+        AttributeDataType: String
+        Mutable: false
+        Required: false
+      - Name: birthdate
+        AttributeDataType: String
+        Mutable: true
+        Required: false
+        StringAttributeConstraints:
+          MinLength: 10
+          MaxLength: 10
+    DependsOn: CognitoLambdaFunction
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: iotexampledomain
+      UserPoolId:
+        Ref: UserPool
+
+  UserPoolLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      Principal: cognito-idp.amazonaws.com
+      FunctionName: cognito_add_user_to_group
+      SourceArn:
+        Fn::GetAtt:
+        - UserPool
+        - Arn
+    DependsOn:
+    - CognitoLambdaFunction
+    - UserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: AppSyncGroupsClient
+      GenerateSecret: false
+      UserPoolId:
+        Ref: UserPool
+
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      Description: end users group
+      GroupName: UserGroup
+      Precedence: 2
+      UserPoolId:
+        Ref: UserPool
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+      - ClientId:
+          Ref: UserPoolClient
+        ProviderName:
+          Fn::GetAtt:
+          - UserPool
+          - ProviderName
+      IdentityPoolName: IoTExampleIdentityPool
+
+  IdentityPoolAuthenticatedIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Federated: cognito-identity.amazonaws.com
+          Action: sts:AssumeRoleWithWebIdentity
+          Condition:
+            StringEquals:
+              cognito-identity.amazonaws.com:aud:
+                Ref: CognitoIdentityPool
+            ForAnyValue:StringLike:
+              cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+      - PolicyName: IdentityPoolAuthenticatedUser
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - appsync:GraphQL
+            - appsync:GetGraphqlApi
+            - appsync:ListGraphqlApis
+            - appsync:ListApiKeys
+            - mobileanalytics:PutEvent
+            - cognito-sync:*
+            - cognito-identity:*
+            Resource:
+            - '*'
+          - Effect: Allow
+            Action:
+            - execute-api:Invoke
+            Resource: '*'
+    DependsOn: CognitoIdentityPool
+
+  IdentityPoolUnauthenticatedIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Federated: cognito-identity.amazonaws.com
+          Action: sts:AssumeRoleWithWebIdentity
+          Condition:
+            StringEquals:
+              cognito-identity.amazonaws.com:aud:
+                Ref: CognitoIdentityPool
+            ForAnyValue:StringLike:
+              cognito-identity.amazonaws.com:amr: unauthenticated
+      Policies:
+      - PolicyName: IdentityPoolUnauthenticatedUser
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - mobileanalytics:PutEvent
+            - cognito-sync:*
+            - cognito-identity:*
+            Resource:
+            - '*'
+    DependsOn: CognitoIdentityPool
+
+  IdentityPoolAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId:
+        Ref: CognitoIdentityPool
+      Roles:
+        authenticated:
+          Fn::GetAtt:
+          - IdentityPoolAuthenticatedIamRole
+          - Arn
+        unauthenticated:
+          Fn::GetAtt:
+          - IdentityPoolUnauthenticatedIamRole
+          - Arn
+    DependsOn:
+    - CognitoIdentityPool
+    - IdentityPoolAuthenticatedIamRole
+    - IdentityPoolUnauthenticatedIamRole
+
+  DataStreamTwoWeekWriterManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DataStreamTwoWeekWriterManagementRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: DataStreamTwoWeekWriterManagementPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - Fn::Join:
+              - ':'
+              - - arn:aws:logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group:/aws/lambda/*:*:*
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: SensorTwoWeekPointTable
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: ControllerSensorDataTable
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+                - /index/DeviceIndex
+
+  DataStreamErrorCheckManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DataStreamErrorCheckManagementRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: DataStreamErrorCheckManagementPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - Fn::Join:
+              - ':'
+              - - arn:aws:logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group:/aws/lambda/*:*:*
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+                - /index/DeviceIndex
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+
+  DataStreamOTASyncManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DataStreamOTASyncManagementRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: DataStreamOTASyncManagementPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - Fn::Join:
+              - ':'
+              - - arn:aws:logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group:/aws/lambda/*:*:*
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+                - /index/DeviceIndex
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:s3:::'
+                - Ref: FirmwareBucket
+                - /*
+          - Effect: Allow
+            Action:
+            - iot:Publish
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:aws:iot:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :*
+
+  NotifyCustomerManagementRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: NotifyCustomerManagementRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: NotifyCustomerManagementRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - Fn::Join:
+              - ':'
+              - - arn:aws:logs
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - log-group:/aws/lambda/*:*:*
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+                - /index/DeviceIndex
+          - Effect: Allow
+            Action:
+            - dynamodb:DescribeStream
+            - dynamodb:GetRecords
+            - dynamodb:GetShardIterator
+            - dynamodb:ListStreams
+            Resource:
+            - Fn::Join:
+              - ''
+              - - 'arn:aws:dynamodb:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :table/
+                - Ref: UserControllerMappingTable
+                - /stream/*
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::Sub: ${EmailerQueue.Arn}
+
+  EmailerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EmailerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: EmailerLambdaRole
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - ses:SendEmail
+            - ses:SendRawEmail
+            Resource:
+              Fn::Join:
+              - ''
+              - - 'arn:aws:ses:'
+                - Ref: AWS::Region
+                - ':'
+                - Ref: AWS::AccountId
+                - :identity/*
+      - PolicyName: ListenEmailerSQS
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            - sqs:ChangeMessageVisibility
+            Resource:
+              Fn::Sub: ${EmailerQueue.Arn}
+      - PolicyName: CognitoAccessCredentials
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - cognito-idp:List*
+            Resource: '*'
+
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+      - python3.8
+      ContentUri: common/python/constants.py
+
+  DataStreamErrorCheckLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: data_stream_error_check
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      FunctionName: data_stream_error_check
+      Description: Check messages as they arrive at the cloud for errors
+      MemorySize: 128
+      Timeout: 60
+      Layers:
+      - Ref: CommonLayer
+      Environment:
+        Variables:
+          USER_MAPPING_TABLE:
+            Ref: UserControllerMappingTable
+      Role:
+        Fn::GetAtt:
+        - DataStreamErrorCheckManagementRole
+        - Arn
+
+  DataStreamOTASyncLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      CodeUri: data_stream_ota_sync
+      FunctionName: data_stream_ota_sync
+      Description: Check incoming version messages to determine if ota is required,
+        else send time sync
+      MemorySize: 128
+      Timeout: 60
+      Environment:
+        Variables:
+          FW_BUCKET:
+            Ref: FirmwareBucket
+          USER_MAPPING_TABLE:
+            Ref: UserControllerMappingTable
+      Role:
+        Fn::GetAtt:
+        - DataStreamOTASyncManagementRole
+        - Arn
+
+  DataStreamTwoWeekWriterLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: data_stream_two_week_writer
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      FunctionName: data_stream_two_week_writer
+      Description: create entries in 2 week table as messages arrive at the cloud
+      MemorySize: 128
+      Timeout: 60
+      Layers:
+      - Ref: CommonLayer
+      Environment:
+        Variables:
+          SENSOR_DATA_TABLE:
+            Ref: ControllerSensorDataTable
+          TWO_WEEK_TABLE:
+            Ref: SensorTwoWeekPointTable
+      Role:
+        Fn::GetAtt:
+        - DataStreamTwoWeekWriterManagementRole
+        - Arn
+
+  DataStreamErrorCheckLambdaInvocationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      SourceArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iot:'
+          - Ref: AWS::Region
+          - ':'
+          - Ref: AWS::AccountId
+          - :rule/
+          - Ref: IoTRuleErrorCheckANDTwoWeekData
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      FunctionName:
+        Fn::GetAtt:
+        - DataStreamErrorCheckLambdaFunction
+        - Arn
+      SourceAccount:
+        Ref: AWS::AccountId
+
+  DataStreamOTASyncLambdaInvocationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      SourceArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iot:'
+          - Ref: AWS::Region
+          - ':'
+          - Ref: AWS::AccountId
+          - :rule/
+          - Ref: IoTRuleOTASync
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      FunctionName:
+        Fn::GetAtt:
+        - DataStreamOTASyncLambdaFunction
+        - Arn
+      SourceAccount:
+        Ref: AWS::AccountId
+
+  DataStreamTwoWeekWriterLambdaInvocationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      SourceArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iot:'
+          - Ref: AWS::Region
+          - ':'
+          - Ref: AWS::AccountId
+          - :rule/
+          - Ref: IoTRuleErrorCheckANDTwoWeekData
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      FunctionName:
+        Fn::GetAtt:
+        - DataStreamTwoWeekWriterLambdaFunction
+        - Arn
+      SourceAccount:
+        Ref: AWS::AccountId
+
+  EmailerLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: emailer
+      Handler: emailer.lambda_handler
+      Runtime: python3.8
+      FunctionName: emailer
+      Description: Send notification email
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          EMAILER_QUEUE_URL:
+            Ref: EmailerQueue
+          COGNITO_USER_POOL_ID:
+            Ref: UserPool
+      Role:
+        Fn::GetAtt:
+        - EmailerLambdaRole
+        - Arn
+
+  NotifyCustomerOfServiceLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: notify_customer_check
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      FunctionName: notify_customer_check
+      Description: send message to emailer sqs if notification is required
+      MemorySize: 128
+      Timeout: 10
+      Environment:
+        Variables:
+          EMAILER_QUEUE_URL:
+            Ref: EmailerQueue
+          USER_MAPPING_TABLE:
+            Ref: UserControllerMappingTable
+      Role:
+        Fn::GetAtt:
+        - NotifyCustomerManagementRole
+        - Arn
+
+  EmailerFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      Enabled: true
+      EventSourceArn:
+        Fn::GetAtt:
+        - EmailerQueue
+        - Arn
+      FunctionName:
+        Fn::GetAtt:
+        - EmailerLambdaFunction
+        - Arn
+
+  UserTableStream:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      Enabled: true
+      EventSourceArn:
+        Fn::GetAtt:
+        - UserControllerMappingTable
+        - StreamArn
+      FunctionName:
+        Fn::GetAtt:
+        - NotifyCustomerOfServiceLambdaFunction
+        - Arn
+      StartingPosition: LATEST
+
+  IoTExampleAppSyncAPI:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: IoTGraphQLAPI
+      AuthenticationType: AMAZON_COGNITO_USER_POOLS
+      UserPoolConfig:
+        UserPoolId:
+          Ref: UserPool
+        AwsRegion:
+          Ref: AWS::Region
+        DefaultAction: ALLOW
+
+  AppSyncIoTExampleSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      Definition: |
+        type DeviceDataConnection {
+        	items: [DeviceDataPoint]
+        	nextToken: String
+        }
+
+        type DeviceDataPoint {
+        	temp: Float!
+        	hum: Int!
+        	timestamp: AWSTimestamp!
+        }
+
+        type Mutation {
+        	createUserDevice(deviceID: String!): UserDevice
+        		@aws_auth(cognito_groups: ["UserGroup"])
+        	deleteUserDevice: UserDevice
+        		@aws_auth(cognito_groups: ["UserGroup"])
+        }
+
+        type Query {
+        	getUserDevices: UserDevice
+        		@aws_auth(cognito_groups: ["UserGroup"])
+        	getSensorData: DeviceDataConnection
+        		@aws_auth(cognito_groups: ["UserGroup"])
+        	getTwoWeekSummary: TwoWeekDataConnection
+        		@aws_auth(cognito_groups: ["UserGroup"])
+        }
+
+        type TwoWeekDataConnection {
+        	items: [TwoWeekDataPoint]
+        	nextToken: String
+        }
+
+        type TwoWeekDataPoint {
+        	temp: Float!
+        	hum: Int!
+        	timestamp: AWSTimestamp!
+        }
+
+        type UserDevice {
+        	userID: String
+        	deviceID: String!
+        	error_msg: String
+        }
+
+        schema {
+        	query: Query
+        	mutation: Mutation
+        }
+    DependsOn: IoTExampleAppSyncAPI
+
+  AppSyncControllerSensorDataDynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub:
+        - AppSyncSensorDataRole-${APIId}
+        - APIId:
+            Fn::GetAtt:
+            - IoTExampleAppSyncAPI
+            - ApiId
+      ManagedPolicyArns:
+      - Ref: AppSyncControllerSensorDataDBPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - appsync.amazonaws.com
+    DependsOn: AppSyncControllerSensorDataDBPolicy
+
+  AppSyncUserControllerMappingDynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub:
+        - AppSyncUserMappingRole-${APIId}
+        - APIId:
+            Fn::GetAtt:
+            - IoTExampleAppSyncAPI
+            - ApiId
+      ManagedPolicyArns:
+      - Ref: AppSyncUserControllerMappingDBPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - appsync.amazonaws.com
+    DependsOn: AppSyncUserControllerMappingDBPolicy
+
+  AppSyncTwoWeekSummaryDynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub:
+        - AppSyncTwoWeekSummaryRole-${APIId}
+        - APIId:
+            Fn::GetAtt:
+            - IoTExampleAppSyncAPI
+            - ApiId
+      ManagedPolicyArns:
+      - Ref: AppSyncTwoWeekSummaryDBPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - appsync.amazonaws.com
+    DependsOn: AppSyncTwoWeekSummaryDBPolicy
+
+  AppSyncControllerSensorDataDBPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: AppSync read only access to Controller Sensor Data Table
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:BatchGetItem
+          Resource:
+          - Fn::Join:
+            - ''
+            - - 'arn:aws:dynamodb:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - :table/
+              - Ref: ControllerSensorDataTable
+
+  AppSyncUserControllerMappingDBPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: AppSync read/write access to User Controller Mapping table
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          - dynamodb:BatchGetItem
+          Resource:
+          - Fn::Join:
+            - ''
+            - - 'arn:aws:dynamodb:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - :table/
+              - Ref: UserControllerMappingTable
+
+  AppSyncTwoWeekSummaryDBPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: AppSync read/write access to Two Week Summary Table
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:BatchGetItem
+          Resource:
+          - Fn::Join:
+            - ''
+            - - 'arn:aws:dynamodb:'
+              - Ref: AWS::Region
+              - ':'
+              - Ref: AWS::AccountId
+              - :table/
+              - Ref: SensorTwoWeekPointTable
+
+  AppSyncControllerSensorDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      Name: ControllerSensorDataDynamoDataSource
+      Description: DynamoDB Controller Sensor Data
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn:
+        Fn::GetAtt:
+        - AppSyncControllerSensorDataDynamoDBRole
+        - Arn
+      DynamoDBConfig:
+        AwsRegion:
+          Ref: AWS::Region
+        TableName:
+          Ref: ControllerSensorDataTable
+        UseCallerCredentials: false
+    DependsOn: IoTExampleAppSyncAPI
+
+  AppSyncUserControllerMappingSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      Name: UserControllerMappingDynamoDataSource
+      Description: DynamoDB User Controller Mapping
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn:
+        Fn::GetAtt:
+        - AppSyncUserControllerMappingDynamoDBRole
+        - Arn
+      DynamoDBConfig:
+        AwsRegion:
+          Ref: AWS::Region
+        TableName:
+          Ref: UserControllerMappingTable
+        UseCallerCredentials: false
+    DependsOn: IoTExampleAppSyncAPI
+
+  AppSyncTwoWeekSummarySource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      Name: TwoWeekSummaryDataSource
+      Description: DynamoDB Two Week Summary Data
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn:
+        Fn::GetAtt:
+        - AppSyncTwoWeekSummaryDynamoDBRole
+        - Arn
+      DynamoDBConfig:
+        AwsRegion:
+          Ref: AWS::Region
+        TableName:
+          Ref: SensorTwoWeekPointTable
+        UseCallerCredentials: false
+    DependsOn: IoTExampleAppSyncAPI
+
+  AppSyncResolverCreateUserDevice:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: createUserDevice
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncUserControllerMappingSource
+        - Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "userID": $util.dynamodb.toDynamoDBJson($ctx.identity.sub),
+            "timestamp": $util.dynamodb.toDynamoDBJson($util.time.nowEpochSeconds()),
+            "deviceID": $util.dynamodb.toDynamoDBJson($ctx.arguments.deviceID)
+          }
+        }
+      ResponseMappingTemplate: $util.toJson($ctx.result)
+    DependsOn:
+    - AppSyncIoTExampleSchema
+    - AppSyncUserControllerMappingSource
+
+  AppSyncResolverDeleteUserDevice:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: deleteUserDevice
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncUserControllerMappingSource
+        - Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "DeleteItem",
+          "key": {
+            "userID": $util.dynamodb.toDynamoDBJson($ctx.identity.sub)
+          }
+        }
+      ResponseMappingTemplate: $util.toJson($ctx.result)
+    DependsOn:
+    - AppSyncIoTExampleSchema
+    - AppSyncUserControllerMappingSource
+
+  AppSyncFunctionGetDevices:
+    Type: AWS::AppSync::FunctionConfiguration
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncUserControllerMappingSource
+        - Name
+      FunctionVersion: '2018-05-29'
+      Name: getUserDevicesFn
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "userID": $util.dynamodb.toDynamoDBJson($ctx.identity.sub)
+          }
+        }
+      ResponseMappingTemplate: $util.toJson($ctx.result)
+    DependsOn:
+    - AppSyncIoTExampleSchema
+    - AppSyncUserControllerMappingSource
+
+  AppSyncFunctionGetSensorData:
+    Type: AWS::AppSync::FunctionConfiguration
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncControllerSensorDataSource
+        - Name
+      FunctionVersion: '2018-05-29'
+      Name: getSensorDataFn
+      RequestMappingTemplate: |
+        #set( $currentTimeEpoch = $util.time.nowEpochSeconds())
+        #set( $hourAgo = $currentTimeEpoch - 3600 )
+        {
+          "version": "2017-02-28",
+          "operation": "Query",
+          "query": {
+            "expression": "deviceID = :id AND #timestamp > :oneHour",
+            "expressionNames": {
+              "#timestamp" : "timestamp"
+            },
+            "expressionValues": {
+              ":id": $util.dynamodb.toDynamoDBJson($ctx.prev.result.deviceID),
+              ":oneHour" : $util.dynamodb.toDynamoDBJson($hourAgo)
+            }
+          },
+          "limit" : 60,
+          "scanIndexForward": false,
+          "consistentRead" : false,
+          "select" : "ALL_ATTRIBUTES"
+        }
+      ResponseMappingTemplate: |
+        {
+          "items": $util.toJson($ctx.result.items),
+          "nextToken": $util.toJson($util.defaultIfNullOrBlank($ctx.result.nextToken, null))
+        }
+    DependsOn:
+    - AppSyncIoTExampleSchema
+    - AppSyncControllerSensorDataSource
+
+  AppSyncFunctionGetTwoWeekData:
+    Type: AWS::AppSync::FunctionConfiguration
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncTwoWeekSummarySource
+        - Name
+      FunctionVersion: '2018-05-29'
+      Name: getTwoWeekDataFn
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "Query",
+          "query": {
+            "expression": "#deviceID = :id",
+            "expressionNames": {
+              "#deviceID": "deviceID"
+            },
+            "expressionValues": {
+              ":id" : $util.dynamodb.toDynamoDBJson($ctx.prev.result.deviceID)
+            }
+          },
+          "consistentRead": false,
+          "select": "ALL_ATTRIBUTES"
+        }"
+      ResponseMappingTemplate: |
+        {
+          "items": $util.toJson($ctx.result.items),
+          "nextToken": $util.toJson($util.defaultIfNullOrBlank($ctx.result.nextToken,null))
+        }"
+    DependsOn:
+    - AppSyncIoTExampleSchema
+    - AppSyncTwoWeekSummarySource
+
+  AppSyncResolverGetUserDeviceMap:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      TypeName: Query
+      FieldName: getUserDevices
+      Kind: PIPELINE
+      PipelineConfig:
+        Functions:
+        - Fn::GetAtt:
+          - AppSyncFunctionGetDevices
+          - FunctionId
+      RequestMappingTemplate: '{}'
+      ResponseMappingTemplate: '$util.toJson($context.result)'
+    DependsOn: AppSyncFunctionGetDevices
+
+  AppSyncResolverGetSensorData:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      TypeName: Query
+      FieldName: getSensorData
+      Kind: PIPELINE
+      PipelineConfig:
+        Functions:
+        - Fn::GetAtt:
+          - AppSyncFunctionGetDevices
+          - FunctionId
+        - Fn::GetAtt:
+          - AppSyncFunctionGetSensorData
+          - FunctionId
+      RequestMappingTemplate: '{}'
+      ResponseMappingTemplate: '$util.toJson($context.result)'
+    DependsOn:
+    - AppSyncFunctionGetSensorData
+    - AppSyncFunctionGetDevices
+
+  AppSyncResolverGetTwoWeekSummary:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - IoTExampleAppSyncAPI
+        - ApiId
+      TypeName: Query
+      FieldName: getTwoWeekSummary
+      Kind: PIPELINE
+      PipelineConfig:
+        Functions:
+        - Fn::GetAtt:
+          - AppSyncFunctionGetDevices
+          - FunctionId
+        - Fn::GetAtt:
+          - AppSyncFunctionGetTwoWeekData
+          - FunctionId
+      RequestMappingTemplate: '{}'
+      ResponseMappingTemplate: '$util.toJson($context.result)'
+    DependsOn: AppSyncFunctionGetTwoWeekData
+
+Outputs:
+  FirmwareBucketName:
+    Value:
+      Ref: FirmwareBucket
+    Description: Name of the S3 bucket to store firmware OTA binary and version.txt
+      file
+  CognitoUserPoolId:
+    Value:
+      Ref: UserPool
+    Description: Cognito user pool ID
+  CognitoUserPoolClientId:
+    Value:
+      Ref: UserPoolClient
+    Description: Client ID for AppSync app
+  CognitoIdentityPoolId:
+    Value:
+      Ref: CognitoIdentityPool
+    Description: Cognito identity pool ID
+  APIEndpoint:
+    Value:
+      Fn::GetAtt:
+      - IoTExampleAppSyncAPI
+      - GraphQLUrl
+    Description: URL of the graphql API
