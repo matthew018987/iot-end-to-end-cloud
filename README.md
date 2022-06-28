@@ -1,4 +1,4 @@
-# iot-end-to-end-cloud
+# IoT end-to-end AWS cloud example
 This project aims to provide an demonstration of an end-to-end cloud stack for an IoT application.
 
 The project includes the following:
