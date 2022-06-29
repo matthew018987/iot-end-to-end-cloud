@@ -1223,7 +1223,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: emailer
-      Handler: emailer.lambda_handler
+      Handler: app.lambda_handler
       Runtime: python3.8
       FunctionName: emailer
       Description: Send notification email
