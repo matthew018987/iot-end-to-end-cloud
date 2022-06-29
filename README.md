@@ -26,5 +26,6 @@ The project includes the following:
     To create a domain identity refer to:
     https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html
 5. open project in your preferred IDE
-6. deploy project to AWS using SAM deployment (Pycharm has a menu feature to do this for you)
+6. edit sender email address in emailer/email_template.py to have a domain matching your SES domain
+7. deploy project to AWS using SAM deployment (Pycharm has a menu feature to do this for you)
     https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-deploy.html
