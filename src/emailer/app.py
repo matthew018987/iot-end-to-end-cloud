@@ -28,16 +28,15 @@ Get the user contact details from the cognito service by usign the provided user
 Send a templated email using the SES service
 
  26/6/22: MN: initial version
+ 29/6/22: MN: fixed reference our of scope response variable
 
 """
 
 import json
 import os
 import boto3
-#from botocore.exceptions import ClientError
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-#from email.mime.application import MIMEApplication
 from email_templates import *
 
 
@@ -99,10 +98,12 @@ def send_email(user_details):
     construct and send email to customer using the ses service
 
     Args:
-        user_details: Dict containing users registered given name string and registered email address string
+        user_details: Dict:
+            given_name: string: name of customer being emailed
+            email_address: string: address of customer being emailed
 
     Returns:
-        dictionary with users registered given name string and user email address string
+        none
     """
     given_name = user_details['given_name']
     email_address = user_details['email_address']
@@ -147,7 +148,7 @@ def send_email(user_details):
                 },
                 Source=sender,
             )
-            print(response)
+            print('email send status: ', response)
     return
 
 
@@ -155,7 +156,18 @@ def send_email(user_details):
 # QUEUE MANAGEMENT FUNCTIONS
 ########################################################################################################
 
+
 def delete_sqs_message(event):
+    """
+    remove message from queue since it has been processed
+
+    Args:
+        event: Dict:
+            receiptHandle: string: address of message we want to delete from the queue
+
+    Returns:
+        none
+    """
     if 'receiptHandle' in event:
         sqs = boto3.client('sqs')
         try:
@@ -163,9 +175,9 @@ def delete_sqs_message(event):
                 QueueUrl=EMAILER_QUEUE_URL,
                 ReceiptHandle=event['receiptHandle']
             )
+            print('remove notification queue entry: ', response)
         except Exception as e:
             print(e)
-        print('remove notification queue entry: ', response)
     return
 
 
@@ -186,21 +198,20 @@ def lambda_handler(event, context):
             'Records': [
                 {
                     'messageId': '1efb833b-43fd-4c9e-963b-ac335754d490',
-                    'receiptHandle': 'AQEBl/EorTlj03vOHIM6UmHzU0/N3+uEviVFBnXMhUUwFq6yzY+HozpBg2ZngDi1H4EVwdos1xiDDJ7tz2EwX6I+uwnAV9uz4Ob5e5nqpwR5owRtCHSV6tg0XHHQqY3llmZzjH39EDKbIT/TsBK7V7Z+0NH5MrW0k4ek6Q2hwYNhGCBH64aJFkOyCDvOm3bJHLHIdvxaaUFSDB8DIu3LJ1WiKQMmYnp57bbh2S9XqkAQoiyzGv/rroq5ybEhR/KBfomRfSsXmxLlJOj8Ka0sXAqTWMCG1imAFL8RU9Cq8qvCnEg1UuhSqWqnln0uRLnDmYVJdfgBODjj6hJIugpBfXzcysqo0xbuzQrsYwsM3mSxn4o4SdQSYLaQ0SwUotbXndvKBShyn1vVOWqU3J1QyVPqLrKQoygZ7vr65q0vNzUUGyo=',
+                    'receiptHandle': 'AQEBl/EorTlj03vFSVDFVDFVHzU0/N3+uEviVFBnDFVDFVzY+HozpBDFVDFH4EVwdos1xiDDJ7tz2EwX6I+uwnAV9uz4Ob5e5nqpwR5owRtCHSV6tg0DFVDFVlmZzjH39EDKbIT/TsBK7V7Z+0NH5MrW0k4ek6Q2hwYNhGCBH64aJFkOyCDvOm3bJHLHIdvxaaUFSDB8DIu3LJ1WiKQMmYnp57bbh2S9XqkAQoiyzGv/rroDFVhR/KBfomRfSsXmxLlJOj8Ka0sXAqTWMCG1imAFL8RU9Cq8qvCnEg1UuhSqWqnDFVDFV6hJIugpBfXzcysqo0xbuzQrsYwsM3mSxn4o4SdQSYLaQ0SwUotbXndvKBShyn1vVOWqU3J1QyVPqLrKQDFVzUUGyo=',
                     'body': "{
-                        'cognito_id':'12345678',
-                        'emailtype':'3000hour'
+                        'cognito_id':'12345678'
                     }",
                     'attributes': {
                         'ApproximateReceiveCount': '1',
                         'SentTimestamp': '1620458414343',
-                        'SenderId': 'AIDAR3G43TF2MCJSW3RE6',
+                        'SenderId': 'AIDASDCACRGSDCJSDC3RE6',
                         'ApproximateFirstReceiveTimestamp': '1620458414386'
                     },
                     'messageAttributes': {},
                     'md5OfBody': '75937062a550dbe8abe1f7e7104f64bc',
                     'eventSource': 'aws:sqs',
-                    'eventSourceARN': 'arn:aws:sqs:us-east-1:127164717428:devicestack1-EmailerQueue-1KOYJIVCU0VPG',
+                    'eventSourceARN': 'arn:aws:sqs:us-east-1:xxxxxxxx:devicestack1-EmailerQueue-1KOYJIVCU0VPG',
                     'awsRegion': 'us-east-1'
                 }
             ]
