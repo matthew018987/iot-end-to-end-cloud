@@ -34,6 +34,7 @@ If it is in a new hour, get the last hours worth of data, summarise it and store
 the summary in the two-week table.
 
  26/6/22: MN: initial version
+ 3/7/22:  MN: code tidy up
 
 """
 import os
@@ -214,37 +215,39 @@ def calculate_average_from_set(data_set):
             'hum': 56
         } 
     """
+    summary = {}
     sum_temp = 0
     sum_hum = 0
     valid_count = 0
     for point in data_set:
         # check if data point is inside limits (not erroneous)
+        print(point)
         inside_limits = \
-            (
-                point['temp'] in range(
-                    constants.LOWER_TEMP_LIMIT,
-                    constants.UPPER_TEMP_LIMIT
-                )
-            ) and \
-            (
-                point['hum'] in range(
-                    constants.LOWER_HUM_LIMIT,
-                    constants.UPPER_HUM_LIMIT
-                )
+            int(point['temp']) in range(
+                constants.LOWER_TEMP_LIMIT,
+                constants.UPPER_TEMP_LIMIT
+            ) and int(point['hum']) in range(
+                constants.LOWER_HUM_LIMIT,
+                constants.UPPER_HUM_LIMIT
             )
         if inside_limits:
             # only use points that exist within the expected range
             sum_temp = sum_temp + point['temp']
             sum_hum = sum_hum + point['hum']
             valid_count = valid_count + 1
+        else:
+            print('point outside limits:', point, constants.LOWER_TEMP_LIMIT, constants.UPPER_TEMP_LIMIT, constants.LOWER_HUM_LIMIT, constants.UPPER_HUM_LIMIT)
     # calculate the average
-    av_temp = sum_temp / valid_count
-    av_hum = sum_hum / valid_count
-    summary = {
-        'temp': av_temp,
-        'hum': av_hum
-    }
-    print('summary:', summary)
+    if valid_count > 0:
+        av_temp = sum_temp / valid_count
+        av_hum = sum_hum / valid_count
+        summary = {
+            'temp': av_temp,
+            'hum': av_hum
+        }
+        print('summary:', summary)
+    else:
+        print('no valid data points found, summary empty')
     return summary
 
 
@@ -289,7 +292,8 @@ def two_week_update_check(device_id, event):
             summary = calculate_average_from_set(hour_of_data)
 
             # store summary in 2 week table
-            write_two_week_data(device_id, summary)
+            if summary:
+                write_two_week_data(device_id, summary)
 
 
 ##############################################################################################

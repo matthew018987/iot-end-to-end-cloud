@@ -27,6 +27,7 @@ Function is triggered by a modification to the user-device mapping table.
 If a new error is detected, a message is sent to a queue which triggers an email notification
 
  26/6/22: MN: initial version
+ 3/7/22:  MN: code tidy up, fixes to notification handling due to UserMappingTable key changes
 
 """
 
@@ -115,42 +116,63 @@ def lambda_handler(event, context):
     If there is a new error, send a message to the customer notification queue.
 
     Args:
-        event: {
+        event: dict
+        {
             'Records': [
                 {
-                    'eventID': 'aaa804eaaab2baaaaaa16caaadaaaca8',
+                    'eventID': '4611b81c6556234570b2345aff585917',
                     'eventName': 'MODIFY',
                     'eventVersion': '1.1',
                     'eventSource': 'aws:dynamodb',
                     'awsRegion': 'us-east-1',
                     'dynamodb': {
-                        'ApproximateCreationDateTime': 1620465185.0,
+                        'ApproximateCreationDateTime': 1656853180.0,
                         'Keys': {
-                            'deviceID': {'S': 'AAAAAAAAAA'}
+                            'userID': {
+                                'S': 'ed8d2345-2345-4e5c-a236-2345e82345'
+                            }
                         },
                         'NewImage': {
-                            'error_msg': {'S': '1'},
-                            'deviceID': {'S': 'AAAAAAAAAA'},
+                            'error_msg': {
+                                'S': 'An error occurred with a sensor'
+                            },
+                            'deviceID': {
+                                'S': 'AAAAAAAAAAAA'
+                            },
+                            'userID': {
+                                'S': 'ed8d2345-2345-4e5c-a236-2345e82345'
+                            },
+                            'timestamp': {
+                                'N': '1656407708'
+                            }
                         },
                         'OldImage': {
-                            'error_msg': {'S': '0'},
-                            'deviceID': {'S': 'AAAAAAAAAA'},
+                            'deviceID': {
+                                'S': 'AAAAAAAAAAAA'
+                            },
+                            'userID': {
+                                'S': 'ed8d2345-2345-4e5c-a236-2345e82345'
+                            },
+                            'timestamp': {
+                                'N': '1656407708'
+                            }
                         },
-                        'SequenceNumber': '111750600000111011102311140',
-                        'SizeBytes': 95,
+                        'SequenceNumber': '2517660000000000000000000',
+                        'SizeBytes': 236,
                         'StreamViewType': 'NEW_AND_OLD_IMAGES'
                     },
-                    'eventSourceARN': 'arn:aws:dynamodb:us-east-1:xxxxxxxxxx:table.....
+                    'eventSourceARN': 'arn:aws:dynamodb:us-east-1:xxxxxxxxxxxx:table/UserController.....
                 }
             ]
         }
+
 
         context: unused
 
     Returns:
       none
     """
-
+    print(event)
     # only pay attention to a record that has been modified
     # records that are CREATED are new entries due to the creating of a mapping between
     # a user & a device
@@ -159,10 +181,15 @@ def lambda_handler(event, context):
         if 'error_msg' in dbentry['NewImage']:
             # notify the customer if there is an error_msg and it's different to the
             # previous recorded error
-            if len(dbentry['NewImage']['error_msg']) > 0:
-                if dbentry['OldImage'] != dbentry['NewImage']:
-                    #
-                    device_id = dbentry['Keys']['deviceID']['S']
-                    print('sensor error at device ID:', device_id)
-                    cognito_id = get_cognito_id_from_device_id(device_id)
+            old_msg = ''
+            if 'error_msg' in dbentry['OldImage']:
+                old_msg = dbentry['OldImage']['error_msg']
+            new_msg = ''
+            if 'error_msg' in dbentry['NewImage']:
+                new_msg = dbentry['NewImage']['error_msg']
+
+            if len(new_msg) > 0:
+                if old_msg != new_msg:
+                    print('sensor error:', dbentry['NewImage'])
+                    cognito_id = dbentry['NewImage']['userID']['S']
                     send_email_notification(cognito_id)

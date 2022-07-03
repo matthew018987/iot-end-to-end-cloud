@@ -29,7 +29,7 @@ If an error is detected, a message is recorded in the device-user mapping table
 in order for a user to be notified of a problem
 
  26/6/22: MN: initial version
-
+ 3/7/22:  MN: code tidy up, fixes to notification handling due to UserMappingTable key changes
 """
 import os
 import boto3
@@ -71,13 +71,12 @@ def get_user_mapping_by_device_id(device_id):
         mapping = response['Items'][0]
     return mapping
 
-def set_error_message_by_cognito_id(cognito_id, device_id, msg):
+def set_error_message_by_cognito_id(cognito_id, msg):
     """
     update an error flag in the user mapping table for a user and device_id
 
     Args:
-        device_id: String containing the unique ID of the IoT device
-        cognitoID: String containing the unique ID of the user
+        cognito_id: String containing the unique ID of the user
         msg: String containing the error message, blank if no error
 
     Returns:
@@ -87,8 +86,7 @@ def set_error_message_by_cognito_id(cognito_id, device_id, msg):
     table = dynamodb.Table(USER_CONTROLLER_MAPPING_TABLE)
     response = table.update_item(
         Key={
-            'userID': cognito_id,
-            'deviceID': device_id
+            'userID': cognito_id
         },
         UpdateExpression="set error_msg = :error_msg",
         ExpressionAttributeValues={
@@ -185,7 +183,6 @@ def lambda_handler(event, context):
                 # set error message in UserControllerMappingTable
                 set_error_message_by_cognito_id(
                     user_mapping['userID'],
-                    user_mapping['device_id'],
                     error_msg
                 )
             else:
@@ -200,6 +197,5 @@ def lambda_handler(event, context):
                         # clear error message in database
                         set_error_message_by_cognito_id(
                             user_mapping['userID'],
-                            user_mapping['deviceID'],
                             ''
                         )

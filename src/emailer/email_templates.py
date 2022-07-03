@@ -1,5 +1,5 @@
 sensor_error = {
-    'body':'\
+    'body': '\
     <html>\
     <head></head>\
     <body>\
@@ -9,6 +9,6 @@ sensor_error = {
     </body>\
     </html>\
     ',
-    "subject":"sensor error",
-    "sender":"noreply@your_domain.com"
+    "subject": "sensor error",
+    "sender": "noreply@your_domain.com"
 }

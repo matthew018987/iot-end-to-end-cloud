@@ -29,7 +29,7 @@ Send a templated email using the SES service
 
  26/6/22: MN: initial version
  29/6/22: MN: fixed reference our of scope response variable
- 3/7/22:  MN: code tidy up
+ 3/7/22:  MN: code tidy up, fixes to notification handling due to UserMappingTable key changes
 
 """
 
@@ -202,7 +202,7 @@ def lambda_handler(event, context):
                     'messageId': '1efb833b-43fd-4c9e-963b-ac335754d490',
                     'receiptHandle': 'AQEBl/EorTlj03vFSVDFVDFVHzU0/N3+uEviVFBnDFVDF.....
                     'body': "{
-                        'cognito_id':'12345678'
+                        'cognitoID':'12345678'
                     }",
                     'attributes': {
                         'ApproximateReceiveCount': '1',
@@ -227,7 +227,7 @@ def lambda_handler(event, context):
 
     for record in event['Records']:
         message = json.loads(record['body'].strip('\n').strip(' '))
-        cognito_id = message['cognito_id']
+        cognito_id = message['cognitoID']
         user_details = get_user_details_by_cognito_id(cognito_id)
         send_email(user_details)
         delete_sqs_message(record)

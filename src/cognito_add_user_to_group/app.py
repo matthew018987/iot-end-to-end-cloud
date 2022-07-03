@@ -29,6 +29,7 @@ to be triggered on user create.
 Code adds the user to group
 
  26/6/22: MN: initial version
+ 3/7/22:  MN: code tidy up
 
 """
 import boto3

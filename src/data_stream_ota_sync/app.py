@@ -31,6 +31,7 @@ If the version numbers do not match, send a message to the device instructing an
 If the version numbers do match, device is up-to-date and send a time sync message.
 
  26/6/22: MN: initial version
+ 3/7/22:  MN: code tidy up
 
 """
 import os
