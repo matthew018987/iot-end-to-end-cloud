@@ -24,7 +24,8 @@
 """Add a cognito user to the project user group
 
 Function is triggered by a new user being added to AWS cognito.
-Cognito does not automatically add users to a group, a lambda fucntion is required to be triggered on user create.
+Cognito does not automatically add users to a group, a lambda fucntion is required
+to be triggered on user create.
 Code adds the user to group
 
  26/6/22: MN: initial version
@@ -33,11 +34,10 @@ Code adds the user to group
 import boto3
 
 
-# add user to cognito user group
 def lambda_handler(event, context):
     """
     This function is triggered by cognito when a user registers themselves using the app.
-    The
+    This function adds the newly registered user to the group named 'UserGroup'
 
     Args:
         event: {
@@ -65,7 +65,7 @@ def lambda_handler(event, context):
 
     Returns:
       event: input event must be returned for cognito to know this was executed successfully
-      "Amazon Cognito expects the return value of the function to have the same format as the input."
+      "Amazon Cognito expects the return value to have the same format as the input."
       # https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-events.html
     """
     client = boto3.client('cognito-idp')

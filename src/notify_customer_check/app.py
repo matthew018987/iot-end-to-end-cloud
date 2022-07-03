@@ -30,15 +30,15 @@ If a new error is detected, a message is sent to a queue which triggers an email
 
 """
 
-import boto3
-import json
 import os
+import json
 from boto3.dynamodb.conditions import Key
+import boto3
 
 
-########################################################################################################
+##############################################################################################
 # CONSTANTS
-########################################################################################################
+##############################################################################################
 
 
 # read constants from environmental variables
@@ -46,9 +46,9 @@ USER_CONTROLLER_MAPPING_TABLE = os.environ['USER_MAPPING_TABLE']
 EMAILER_QUEUE_URL = os.environ['EMAILER_QUEUE_URL']
 
 
-########################################################################################################
+##############################################################################################
 # DATABASE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_cognito_id_from_device_id(device_id):
@@ -76,14 +76,15 @@ def get_cognito_id_from_device_id(device_id):
     return cognito_id
 
 
-########################################################################################################
+##############################################################################################
 # QUEUE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def send_email_notification(cognito_id):
     """
-    this function sends a message to a queue, which triggers a function to email a notification to a user
+    this function sends a message to a queue, which triggers a function to email a
+    notification to a user
 
     Args:
         cognito_id: String containing the unique ID of the user account we wish to notify
@@ -100,12 +101,11 @@ def send_email_notification(cognito_id):
         MessageBody=json.dumps(sqs_message)
     )
     print('Error message added to emailer queue: ', response)
-    return
 
 
-########################################################################################################
+##############################################################################################
 # ENTRY POINT
-########################################################################################################
+##############################################################################################
 
 
 def lambda_handler(event, context):
@@ -140,7 +140,7 @@ def lambda_handler(event, context):
                         'SizeBytes': 95,
                         'StreamViewType': 'NEW_AND_OLD_IMAGES'
                     },
-                    'eventSourceARN': 'arn:aws:dynamodb:us-east-1:xxxxxxxxxx:table/MaintenanceTable/stream/2022-06-26T09:09:44.880'
+                    'eventSourceARN': 'arn:aws:dynamodb:us-east-1:xxxxxxxxxx:table.....
                 }
             ]
         }
@@ -152,11 +152,13 @@ def lambda_handler(event, context):
     """
 
     # only pay attention to a record that has been modified
-    # records that are CREATED are new entries due to the creating of a mapping between a user & a device
+    # records that are CREATED are new entries due to the creating of a mapping between
+    # a user & a device
     if 'MODIFY' == event['Records'][0]['eventName']:
         dbentry = event['Records'][0]['dynamodb']
         if 'error_msg' in dbentry['NewImage']:
-            # notify the customer if there is an error_msg and it's different to the previous recorded error
+            # notify the customer if there is an error_msg and it's different to the
+            # previous recorded error
             if len(dbentry['NewImage']['error_msg']) > 0:
                 if dbentry['OldImage'] != dbentry['NewImage']:
                     #
@@ -164,5 +166,3 @@ def lambda_handler(event, context):
                     print('sensor error at device ID:', device_id)
                     cognito_id = get_cognito_id_from_device_id(device_id)
                     send_email_notification(cognito_id)
-
-    return

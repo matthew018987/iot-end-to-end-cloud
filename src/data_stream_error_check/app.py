@@ -31,22 +31,22 @@ in order for a user to be notified of a problem
  26/6/22: MN: initial version
 
 """
-import boto3
 import os
-from boto3.dynamodb.conditions import Key, Attr
-from constants import *
+import boto3
+from boto3.dynamodb.conditions import Key
+import constants
 
 
-########################################################################################################
+##############################################################################################
 # CONSTANTS
-########################################################################################################
+##############################################################################################
 
 # read constants from environmental variables
 USER_CONTROLLER_MAPPING_TABLE = os.environ['USER_MAPPING_TABLE']
 
-########################################################################################################
+##############################################################################################
 # DATABASE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_user_mapping_by_device_id(device_id):
@@ -70,7 +70,6 @@ def get_user_mapping_by_device_id(device_id):
     if response['Count'] > 0:
         mapping = response['Items'][0]
     return mapping
-
 
 def set_error_message_by_cognito_id(cognito_id, device_id, msg):
     """
@@ -97,12 +96,11 @@ def set_error_message_by_cognito_id(cognito_id, device_id, msg):
         }
     )
     print('set error message: ', response)
-    return
 
 
-########################################################################################################
+##############################################################################################
 # PROCESS DATA FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def check_for_errors(device_id, event):
@@ -123,8 +121,8 @@ def check_for_errors(device_id, event):
     """
     # check environmental sensors are within defined boundaries
     inside_limits = \
-        (event['temp'] in range(LOWER_TEMP_LIMIT, UPPER_TEMP_LIMIT)) and \
-        (event['hum'] in range(LOWER_HUM_LIMIT, UPPER_HUM_LIMIT))
+        (event['temp'] in range(constants.LOWER_TEMP_LIMIT, constants.UPPER_TEMP_LIMIT)) and \
+        (event['hum'] in range(constants.LOWER_HUM_LIMIT, constants.UPPER_HUM_LIMIT))
 
     all_correct = inside_limits
     msg = ''
@@ -139,14 +137,15 @@ def check_for_errors(device_id, event):
     return error, msg
 
 
-########################################################################################################
+##############################################################################################
 # ENTRY POINT
-########################################################################################################
+##############################################################################################
 
 
 def lambda_handler(event, context):
     """
-    this function is triggered by incoming sensor data from IoT Core and used to process streaming data
+    This function is triggered by incoming sensor data from IoT Core and used to process
+    streaming data
     sanity check sensor data is received:
         update 2 weekly table if we've just passed the hour
         check for error in sensor data
@@ -181,17 +180,26 @@ def lambda_handler(event, context):
             # if error is detected check for a mapping to a user account
             if user_mapping:
                 # a user account has been found, set error flag in database
-                print('IoT device error detected, device_id:', device_id, 'cognitoID:', user_mapping['userID'])
+                print('IoT device error detected, device_id:', device_id,
+                      'cognitoID:', user_mapping['userID'])
                 # set error message in UserControllerMappingTable
-                set_error_message_by_cognito_id(user_mapping['userID'], user_mapping['device_id'], error_msg)
+                set_error_message_by_cognito_id(
+                    user_mapping['userID'],
+                    user_mapping['device_id'],
+                    error_msg
+                )
             else:
                 # no user account mapping found, log event
-                print('controller error detected, device_id:', device_id, 'no user has onboarded this device')
+                print('controller error detected, device_id:', device_id,
+                      'no user has onboarded this device')
         else:
             # if no error found, clear any existing error flags
             if user_mapping:
                 if 'error_msg' in user_mapping:
                     if user_mapping['error_msg'] != '':
-                        set_error_message_by_cognito_id(user_mapping['userID'], user_mapping['deviceID'], '')
-
-    return
+                        # clear error message in database
+                        set_error_message_by_cognito_id(
+                            user_mapping['userID'],
+                            user_mapping['deviceID'],
+                            ''
+                        )

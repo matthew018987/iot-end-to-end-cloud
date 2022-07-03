@@ -33,16 +33,16 @@ If the version numbers do match, device is up-to-date and send a time sync messa
  26/6/22: MN: initial version
 
 """
-import boto3
-import json
 import os
+import json
 from datetime import datetime
-from boto3.dynamodb.conditions import Key, Attr
+import boto3
+from boto3.dynamodb.conditions import Key
 
 
-########################################################################################################
+##############################################################################################
 # CONSTANTS
-########################################################################################################
+##############################################################################################
 
 # read constants from environmental variables
 FIRMWARE_BUCKET = os.environ['FW_BUCKET']
@@ -53,9 +53,9 @@ FIRMWARE_FILE_NAME = 'your_firmware_file.bin'
 FIRMWARE_TARGET_VERSION_FILE = 'version.txt'
 
 
-########################################################################################################
+##############################################################################################
 # TIME FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_now():
@@ -73,9 +73,9 @@ def get_now():
     return epoch_secs
 
 
-########################################################################################################
+##############################################################################################
 # SEND INSTRUCTIONS TO IOT DEVICE
-########################################################################################################
+##############################################################################################
 
 
 def do_ota(device_id):
@@ -112,9 +112,6 @@ def do_ota(device_id):
     )
     print('publish OTA request: ', response)
 
-    return
-
-
 def send_time_sync(device_id):
     """
     send a message to a specific IoT device to sync its time with the cloud
@@ -137,24 +134,25 @@ def send_time_sync(device_id):
         payload=json.dumps({"time": now_time})
     )
     print(response)
-    return
 
-########################################################################################################
+##############################################################################################
 # DATABASE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_latest_version():
     """
-    get the target firmware version number to compare against the IoT device reported version number
+    get the target firmware version number to compare against the IoT device reported version
+    number
 
-    Args: none
+    Args:
+        none
 
     Returns:
         string containing the target version number
     """
-    s3 = boto3.resource('s3')
-    obj = s3.Object(FIRMWARE_BUCKET, FIRMWARE_TARGET_VERSION_FILE)
+    s3_resource = boto3.resource('s3')
+    obj = s3_resource.Object(FIRMWARE_BUCKET, FIRMWARE_TARGET_VERSION_FILE)
     version = obj.get()['Body'].read().decode('ascii')
     version = version.strip('\n').strip('\r')
     return version
@@ -208,12 +206,11 @@ def set_device_version_message_by_cognito_id(cognito_id, device_id, version):
         }
     )
     print('set version message: ', response)
-    return
 
 
-########################################################################################################
+##############################################################################################
 # ENTRY POINT
-########################################################################################################
+##############################################################################################
 
 
 def lambda_handler(event, context):
@@ -252,15 +249,18 @@ def lambda_handler(event, context):
         print(latest_version)
 
         if current_version != latest_version:
-            # if reported version number doesn't match the latest version number, issue ota command
+            # if reported version number doesn't match the latest version number,
+            # issue ota command
             do_ota(device_id)
         else:
             # if the firmware is up to date, send time sync message to IoT device
             send_time_sync(device_id)
 
             # keep a record of the version of firmware the device reported
-            user_mapping = get_user_mapping_by_device_id()
+            user_mapping = get_user_mapping_by_device_id(device_id)
             if user_mapping:
-                set_device_version_message_by_cognito_id(user_mapping['userID'], device_id, current_version)
-
-    return
+                set_device_version_message_by_cognito_id(
+                    user_mapping['userID'],
+                    device_id,
+                    current_version
+                )

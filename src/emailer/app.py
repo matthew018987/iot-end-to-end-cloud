@@ -29,20 +29,22 @@ Send a templated email using the SES service
 
  26/6/22: MN: initial version
  29/6/22: MN: fixed reference our of scope response variable
+ 3/7/22:  MN: code tidy up
 
 """
 
-import json
 import os
-import boto3
+import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email_templates import *
+import email_templates
+import botocore
+import boto3
 
 
-########################################################################################################
+##############################################################################################
 # CONSTANTS
-########################################################################################################
+##############################################################################################
 
 
 # read constants from environmental variables
@@ -50,9 +52,9 @@ COGNITO_USER_POOL_ID = os.environ['COGNITO_USER_POOL_ID']
 EMAILER_QUEUE_URL = os.environ['EMAILER_QUEUE_URL']
 
 
-########################################################################################################
+##############################################################################################
 # DATABASE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_user_details_by_cognito_id(cognito_id):
@@ -88,9 +90,9 @@ def get_user_details_by_cognito_id(cognito_id):
     return user_details
 
 
-########################################################################################################
+##############################################################################################
 # EMAIL FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def send_email(user_details):
@@ -115,9 +117,9 @@ def send_email(user_details):
 
         destination = email_address
 
-        body_html = sensor_error['body']
-        subject = sensor_error['subject']
-        sender = sensor_error['sender']
+        body_html = email_templates.sensor_error['body']
+        subject = email_templates.sensor_error['subject']
+        sender = email_templates.sensor_error['sender']
 
         if body_html != '':
             # replace the token ### with the users given name
@@ -149,12 +151,11 @@ def send_email(user_details):
                 Source=sender,
             )
             print('email send status: ', response)
-    return
 
 
-########################################################################################################
+##############################################################################################
 # QUEUE MANAGEMENT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def delete_sqs_message(event):
@@ -162,7 +163,7 @@ def delete_sqs_message(event):
     remove message from queue since it has been processed
 
     Args:
-        event: Dict:
+        event: dict:
             receiptHandle: string: address of message we want to delete from the queue
 
     Returns:
@@ -176,14 +177,13 @@ def delete_sqs_message(event):
                 ReceiptHandle=event['receiptHandle']
             )
             print('remove notification queue entry: ', response)
-        except Exception as e:
-            print(e)
-    return
+        except botocore.exceptions.ClientError as err:
+            print('Error Message: {}'.format(err.response['Error']['Message']))
 
 
-########################################################################################################
+##############################################################################################
 # ENTRY POINT
-########################################################################################################
+##############################################################################################
 
 
 def lambda_handler(event, context):
@@ -194,11 +194,13 @@ def lambda_handler(event, context):
     Send the email using the AWS SES service
 
     Args:
+        event: dict
+            event data structure contains required parameter named cognito_id
         event: {
             'Records': [
                 {
                     'messageId': '1efb833b-43fd-4c9e-963b-ac335754d490',
-                    'receiptHandle': 'AQEBl/EorTlj03vFSVDFVDFVHzU0/N3+uEviVFBnDFVDFVzY+HozpBDFVDFH4EVwdos1xiDDJ7tz2EwX6I+uwnAV9uz4Ob5e5nqpwR5owRtCHSV6tg0DFVDFVlmZzjH39EDKbIT/TsBK7V7Z+0NH5MrW0k4ek6Q2hwYNhGCBH64aJFkOyCDvOm3bJHLHIdvxaaUFSDB8DIu3LJ1WiKQMmYnp57bbh2S9XqkAQoiyzGv/rroDFVhR/KBfomRfSsXmxLlJOj8Ka0sXAqTWMCG1imAFL8RU9Cq8qvCnEg1UuhSqWqnDFVDFV6hJIugpBfXzcysqo0xbuzQrsYwsM3mSxn4o4SdQSYLaQ0SwUotbXndvKBShyn1vVOWqU3J1QyVPqLrKQDFVzUUGyo=',
+                    'receiptHandle': 'AQEBl/EorTlj03vFSVDFVDFVHzU0/N3+uEviVFBnDFVDF.....
                     'body': "{
                         'cognito_id':'12345678'
                     }",
@@ -211,7 +213,7 @@ def lambda_handler(event, context):
                     'messageAttributes': {},
                     'md5OfBody': '75937062a550dbe8abe1f7e7104f64bc',
                     'eventSource': 'aws:sqs',
-                    'eventSourceARN': 'arn:aws:sqs:us-east-1:xxxxxxxx:devicestack1-EmailerQueue-1KOYJIVCU0VPG',
+                    'eventSourceARN': 'arn:aws:sqs:us-east-1:xxxxxxxx:devicestack1-.....
                     'awsRegion': 'us-east-1'
                 }
             ]
@@ -229,5 +231,3 @@ def lambda_handler(event, context):
         user_details = get_user_details_by_cognito_id(cognito_id)
         send_email(user_details)
         delete_sqs_message(record)
-
-    return

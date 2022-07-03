@@ -36,26 +36,26 @@ the summary in the two-week table.
  26/6/22: MN: initial version
 
 """
-import boto3
 import os
 from datetime import datetime
-from boto3.dynamodb.conditions import Key, Attr
 from decimal import Decimal
-from constants import *
+import boto3
+from boto3.dynamodb.conditions import Key
+import constants
 
 
-########################################################################################################
+##############################################################################################
 # CONSTANTS
-########################################################################################################
+##############################################################################################
 
 # read constants from environmental variables
 SENSOR_DATA_TABLE = os.environ['SENSOR_DATA_TABLE']
 TWO_WEEK_TABLE = os.environ['TWO_WEEK_TABLE']
 
 
-########################################################################################################
+##############################################################################################
 # TIME FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_now():
@@ -83,16 +83,21 @@ def round_time_down_to_hour():
     returns:
         none
     """
-    dt = datetime.fromtimestamp(get_now())
-    adjusted_dt = dt.replace(second=0, microsecond=0, minute=0, hour=dt.hour)
+    current_datetime = datetime.fromtimestamp(get_now())
+    adjusted_datetime = current_datetime.replace(
+                            hour=current_datetime.hour,
+                            minute=0,
+                            second=0,
+                            microsecond=0
+                        )
     epoch = datetime.utcfromtimestamp(0)
-    epoch_secs_by_hour = int((adjusted_dt - epoch).total_seconds())
+    epoch_secs_by_hour = int((adjusted_datetime - epoch).total_seconds())
     return epoch_secs_by_hour
 
 
-########################################################################################################
+##############################################################################################
 # DATABASE SUPPORT FUNCTIONS
-########################################################################################################
+##############################################################################################
 
 
 def get_previous_sensor_data(device_id, timestamp):
@@ -134,7 +139,9 @@ def get_last_hour_of_sensor_data(device_id, start_time, end_time):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(SENSOR_DATA_TABLE)
     response = table.query(
-        KeyConditionExpression=Key('deviceID').eq(device_id) & Key('timestamp').between(start_time, end_time),
+        KeyConditionExpression=
+            Key('deviceID').eq(device_id) &
+            Key('timestamp').between(start_time, end_time),
         Limit=60,
         ScanIndexForward=False
     )
@@ -150,9 +157,16 @@ def write_two_week_data(device_id, summary):
     update two week table with a new entry
 
     Args:
-        device_id: String containing the unique ID of the IoT device
-        timestamp: integer used as sort key in the table, this is the timestamp of the end of the hour
-        summary: summarised data points
+        device_id: string:
+            the unique ID of the IoT device
+        timestamp: int
+            used as sort key in the table, this is the timestamp of the end of the hour
+        summary: dict
+            summarised data points to write to the database
+            {
+                'temp': 24.5,
+                'hum': 65
+            }
 
     Returns:
         none
@@ -160,7 +174,8 @@ def write_two_week_data(device_id, summary):
     timestamp = round_time_down_to_hour()
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(TWO_WEEK_TABLE)
-    # the expiry timestamp is used by dynamodb to delete entries when the current time passes the expiry timestamp value
+    # the expiry timestamp is used by dynamodb to delete entries when the current time
+    # passes the expiry timestamp value
     expire_timestamp = timestamp + (14 * 24 * 60 * 60)
 
     response = table.put_item(
@@ -173,11 +188,64 @@ def write_two_week_data(device_id, summary):
         }
     )
     print('two week entry write: ', response)
-    return
 
-########################################################################################################
+
+##############################################################################################
 # PROCESS DATA FUNCTIONS
-########################################################################################################
+##############################################################################################
+
+
+def calculate_average_from_set(data_set):
+    """
+    Calculate the average temperature & average humidity from an array of values.
+    Ignore any that are out of expected range.
+
+    Args:
+        data_set: array of dict
+        dict: {
+            'temp': 25.4,
+            'hum': 54
+        }
+
+    Return:
+        dict containing average temp & humidity
+        {
+            'temp': 36.4,
+            'hum': 56
+        } 
+    """
+    sum_temp = 0
+    sum_hum = 0
+    valid_count = 0
+    for point in data_set:
+        # check if data point is inside limits (not erroneous)
+        inside_limits = \
+            (
+                point['temp'] in range(
+                    constants.LOWER_TEMP_LIMIT,
+                    constants.UPPER_TEMP_LIMIT
+                )
+            ) and \
+            (
+                point['hum'] in range(
+                    constants.LOWER_HUM_LIMIT,
+                    constants.UPPER_HUM_LIMIT
+                )
+            )
+        if inside_limits:
+            # only use points that exist within the expected range
+            sum_temp = sum_temp + point['temp']
+            sum_hum = sum_hum + point['hum']
+            valid_count = valid_count + 1
+    # calculate the average
+    av_temp = sum_temp / valid_count
+    av_hum = sum_hum / valid_count
+    summary = {
+        'temp': av_temp,
+        'hum': av_hum
+    }
+    print('summary:', summary)
+    return summary
 
 
 def two_week_update_check(device_id, event):
@@ -218,40 +286,22 @@ def two_week_update_check(device_id, event):
             print('hour_of_data: ', hour_of_data)
 
             # create a summary
-            sum_temp = 0
-            sum_hum = 0
-            valid_count = 0
-            for point in hour_of_data:
-                inside_limits = \
-                    (point['temp'] in range(LOWER_TEMP_LIMIT, UPPER_TEMP_LIMIT)) and \
-                    (point['hum'] in range(LOWER_HUM_LIMIT, UPPER_HUM_LIMIT))
-                if inside_limits:
-                    # only use points that exist within the expected range
-                    sum_temp = sum_temp + point['temp']
-                    sum_hum = sum_hum + point['hum']
-                    valid_count = valid_count + 1
-            av_temp = sum_temp / valid_count
-            av_hum = sum_hum / valid_count
-            summary = {
-                'temp': av_temp,
-                'hum': av_hum
-            }
-            print('summary:', summary)
+            summary = calculate_average_from_set(hour_of_data)
 
             # store summary in 2 week table
             write_two_week_data(device_id, summary)
 
-    return
 
-
-########################################################################################################
+##############################################################################################
 # ENTRY POINT
-########################################################################################################
+##############################################################################################
 
 
 def lambda_handler(event, context):
     """
-    this function is triggered by incoming sensor data from IoT Core and used to process streaming data
+    this function is triggered by incoming sensor data from IoT Core and used to process
+    streaming data
+
     if sensor data is received:
         update 2 weekly table if we've just passed the hour
         check for error in sensor data
@@ -263,8 +313,9 @@ def lambda_handler(event, context):
             send current time to device to sync device clock with cloud
 
     Args:
+        event: dict
         the incoming message varies depending on what the device is reporting
-        sensor data event: {
+        {
             'hum': 60,
             'temp': 25.4,
             'timestamp': 1656050903,
@@ -274,7 +325,7 @@ def lambda_handler(event, context):
         context: unused
 
     Returns:
-      none
+        none
     """
     print(event)
     # get device ID from incoming message
@@ -287,5 +338,3 @@ def lambda_handler(event, context):
     if ('temp' in event) and ('hum' in event):
         # check whether we need to update the 2 week table
         two_week_update_check(device_id, event)
-
-    return
